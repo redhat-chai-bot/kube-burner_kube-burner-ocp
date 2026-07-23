@@ -32,6 +32,11 @@ global:
         namespace: "openshift-ovn-kubernetes"
         labelSelector: {app: ovnkube-control-plane}
         url: http://localhost:29108/debug/pprof/profile?seconds=60
+      - name: kube-apiserver-cpu
+        namespace: "openshift-kube-apiserver"
+        labelSelector: {app: openshift-kube-apiserver}
+        bearerToken: {{ .BEARER_TOKEN }}
+        url: https://localhost:6443/debug/pprof/profile?timeout=30
 {{ end }}
 {{ if .SVC_LATENCY }}
     - name: serviceLatency

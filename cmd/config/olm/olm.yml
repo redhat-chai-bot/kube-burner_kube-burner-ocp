@@ -22,6 +22,11 @@ global:
         namespace: "openshift-operator-controller"
         labelSelector: {control-plane: operator-controller-controller-manager}
         url: http://localhost:8082/debug/pprof/heap
+      - name: kube-apiserver-cpu
+        namespace: "openshift-kube-apiserver"
+        labelSelector: {app: openshift-kube-apiserver}
+        bearerToken: {{ .BEARER_TOKEN }}
+        url: https://localhost:6443/debug/pprof/profile?timeout=30
 {{ end }}
 
 metricsEndpoints:
