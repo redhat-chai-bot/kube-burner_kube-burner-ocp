@@ -7,8 +7,8 @@ global:
     - name: podLatency
 {{ if .PPROF }}
     - name: pprof
-      pprofInterval: {{.PPROF_INTERVAL}}
-      pprofDirectory: pprof-data
+      pprofInterval: 1m
+      pprofDirectory: /tmp/pprof-data
       pprofTargets:
       - name: kube-apiserver-cpu
         namespace: "openshift-kube-apiserver"
