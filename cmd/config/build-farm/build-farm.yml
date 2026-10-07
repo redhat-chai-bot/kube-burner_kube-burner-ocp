@@ -8,13 +8,8 @@ global:
 {{ if .PPROF }}
     - name: pprof
       pprofInterval: 1m
-      pprofDirectory: /tmp/pprof-data
+      pprofDirectory: pprof-data
       pprofTargets:
-      - name: kube-apiserver-cpu
-        namespace: "openshift-kube-apiserver"
-        labelSelector: {app: openshift-kube-apiserver}
-        bearerToken: {{ .BEARER_TOKEN }}
-        url: https://localhost:6443/debug/pprof/profile?timeout=30
       - name: kube-apiserver-heap
         namespace: "openshift-kube-apiserver"
         labelSelector: {app: openshift-kube-apiserver}
