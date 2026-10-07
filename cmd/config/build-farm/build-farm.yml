@@ -5,6 +5,22 @@ global:
   deletionStrategy: {{ .DELETION_STRATEGY }}
   measurements:
     - name: podLatency
+{{ if .PPROF }}
+    - name: pprof
+      pprofInterval: {{.PPROF_INTERVAL}}
+      pprofDirectory: pprof-data
+      pprofTargets:
+      - name: kube-apiserver-cpu
+        namespace: "openshift-kube-apiserver"
+        labelSelector: {app: openshift-kube-apiserver}
+        bearerToken: {{ .BEARER_TOKEN }}
+        url: https://localhost:6443/debug/pprof/profile?timeout=30
+      - name: kube-apiserver-heap
+        namespace: "openshift-kube-apiserver"
+        labelSelector: {app: openshift-kube-apiserver}
+        bearerToken: {{ .BEARER_TOKEN }}
+        url: https://localhost:6443/debug/pprof/heap
+{{ end }}
 
 metricsEndpoints:
 {{ if .ES_SERVER }}
