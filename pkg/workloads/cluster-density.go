@@ -16,9 +16,11 @@ package workloads
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/kube-burner/kube-burner-ocp/pkg/clusterhealth"
@@ -30,6 +32,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/kubernetes"
 )
 
 // NewClusterDensity holds cluster-density workload
@@ -49,8 +52,16 @@ func NewClusterDensity(wh *workloads.WorkloadHelper, variant string) *cobra.Comm
 		Short:        fmt.Sprintf("Runs %v workload", variant),
 		SilenceUsage: true,
 		Run: func(cmd *cobra.Command, args []string) {
+			var tempFiles []string
+			defer func() {
+				for _, tempFile := range tempFiles {
+					if err := os.Remove(tempFile); err != nil && !os.IsNotExist(err) {
+						log.Warnf("Failed to remove temporary etcd certificate file %s: %v", tempFile, err)
+					}
+				}
+			}()
 			kubeClientProvider := config.NewKubeClientProvider("", "")
-			clientSet, _ := kubeClientProvider.ClientSet(0, 0)
+			clientSet, restConfig := kubeClientProvider.ClientSet(0, 0)
 			if cmd.Name() == "cluster-density-v2" {
 				if err := clusterhealth.IsClusterImageRegistryAvailable(clientSet); err != nil {
 					log.Fatal(err.Error())
@@ -106,6 +117,75 @@ func NewClusterDensity(wh *workloads.WorkloadHelper, variant string) *cobra.Comm
 			AdditionalVars["NODE_SELECTOR"] = string(nodeSelectorJson)
 			AdditionalVars["PPROF"] = pprof
 			AdditionalVars["PPROF_INTERVAL"] = pprofInterval.String()
+			if pprof {
+				etcdSecret, err := clientSet.CoreV1().Secrets("openshift-etcd").Get(context.Background(), "etcd-all-certs", metav1.GetOptions{})
+				if err != nil {
+					log.Warnf("Failed to get etcd-all-certs secret: %v. Skipping etcd pprof target.", err)
+				} else {
+					var certData, keyData []byte
+					for name, value := range etcdSecret.Data {
+						if strings.HasPrefix(name, "etcd-peer-") && strings.HasSuffix(name, ".crt") {
+							keyName := strings.TrimSuffix(name, ".crt") + ".key"
+							if kd, ok := etcdSecret.Data[keyName]; ok {
+								certData = value
+								keyData = kd
+								break
+							}
+						}
+					}
+					if certData != nil && keyData != nil {
+						certFile, err := writeTempFile("etcd-peer-*.crt", certData)
+						if err != nil {
+							log.Warnf("Failed to create temp file for etcd cert: %v. Skipping etcd pprof target.", err)
+						} else {
+							tempFiles = append(tempFiles, certFile)
+							keyFile, err := writeTempFile("etcd-peer-*.key", keyData)
+							if err != nil {
+								log.Warnf("Failed to create temp file for etcd key: %v. Skipping etcd pprof target.", err)
+								os.Remove(certFile)
+							} else {
+								tempFiles = append(tempFiles, keyFile)
+								AdditionalVars["ETCD_CERT_FILE"] = certFile
+								AdditionalVars["ETCD_KEY_FILE"] = keyFile
+								AdditionalVars["ETCD_CERT"] = base64.StdEncoding.EncodeToString(certData)
+								AdditionalVars["ETCD_KEY"] = base64.StdEncoding.EncodeToString(keyData)
+								log.Info("Extracted etcd peer certificates for pprof target")
+
+								// Detect etcd pprof port based on OCP version
+								// OCP 5.0+: port 2381 (etcd metrics/debug listener)
+								// OCP 4.x:  port 2379 (client API port)
+								etcdPprofPort := "2379"
+								typedClientSet := kubernetes.NewForConfigOrDie(restConfig)
+								data, err := typedClientSet.RESTClient().Get().
+									AbsPath("/apis/config.openshift.io/v1/clusterversions/version").
+									DoRaw(context.Background())
+								if err == nil {
+									var cv map[string]interface{}
+									if json.Unmarshal(data, &cv) == nil {
+										if status, ok := cv["status"].(map[string]interface{}); ok {
+											if desired, ok := status["desired"].(map[string]interface{}); ok {
+												if version, ok := desired["version"].(string); ok {
+													if strings.HasPrefix(version, "5.") {
+														etcdPprofPort = "2381"
+														log.Infof("Detected OCP 5.x (version %s), using etcd pprof port %s", version, etcdPprofPort)
+													} else {
+														log.Infof("Detected OCP version %s, using etcd pprof port %s", version, etcdPprofPort)
+													}
+												}
+											}
+										}
+									}
+								} else {
+									log.Warnf("Failed to detect OCP version for etcd pprof port selection: %v. Defaulting to port %s", err, etcdPprofPort)
+								}
+								AdditionalVars["ETCD_PPROF_PORT"] = etcdPprofPort
+							}
+						}
+					} else {
+						log.Warn("Could not find etcd peer cert/key pair in etcd-all-certs secret. Skipping etcd pprof target.")
+					}
+				}
+			}
 			AdditionalVars["CHURN_CYCLES"] = churnCycles
 			AdditionalVars["CHURN_DURATION"] = churnDuration
 			AdditionalVars["CHURN_DELAY"] = churnDelay
@@ -140,4 +220,22 @@ func NewClusterDensity(wh *workloads.WorkloadHelper, variant string) *cobra.Comm
 
 func clusterDensityNeedsIngressDomain(variant string) bool {
 	return variant != "cluster-density-ms"
+}
+
+func writeTempFile(pattern string, data []byte) (string, error) {
+	f, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		os.Remove(name)
+		return "", err
+	}
+	if err = f.Close(); err != nil {
+		os.Remove(name)
+		return "", err
+	}
+	return name, nil
 }

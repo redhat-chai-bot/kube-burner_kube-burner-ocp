@@ -16,22 +16,17 @@ global:
       pprofInterval: {{.PPROF_INTERVAL}}
       pprofDirectory: pprof-data
       pprofTargets:
-      - name: ovnkube-controller-heap
-        namespace: "openshift-ovn-kubernetes"
-        labelSelector: {app: ovnkube-node}
-        url: http://localhost:29103/debug/pprof/heap
-      - name: ovnkube-controller-cpu
-        namespace: "openshift-ovn-kubernetes"
-        labelSelector: {app: ovnkube-node}
-        url: http://localhost:29103/debug/pprof/profile?seconds=60
-      - name: ovnk-control-plane-heap
-        namespace: "openshift-ovn-kubernetes"
-        labelSelector: {app: ovnkube-control-plane}
-        url: http://localhost:29108/debug/pprof/heap
-      - name: ovnk-control-plane-cpu
-        namespace: "openshift-ovn-kubernetes"
-        labelSelector: {app: ovnkube-control-plane}
-        url: http://localhost:29108/debug/pprof/profile?seconds=60
+{{ if .ETCD_CERT_FILE }}
+      - name: etcd-heap
+        namespace: "openshift-etcd"
+        labelSelector: {app: etcd}
+        # Include the base64 content so kube-burner can copy the credentials into each etcd pod.
+        cert: {{.ETCD_CERT}}
+        key: {{.ETCD_KEY}}
+        certFile: {{.ETCD_CERT_FILE}}
+        keyFile: {{.ETCD_KEY_FILE}}
+        url: https://localhost:{{.ETCD_PPROF_PORT}}/debug/pprof/heap
+{{ end }}
 {{ end }}
 {{ if .SVC_LATENCY }}
     - name: serviceLatency
